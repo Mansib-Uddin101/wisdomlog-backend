@@ -17,28 +17,13 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   }
 });
-const sample_data = {
-  "name": "Niledo",
-  "species": "Dog",
-  "breed": "German Shepherd",
-  "age": "3 years",
-  "gender": "Male",
-  "imageUrl": "https://images.unsplash.com/photo-1589941013453-ec89f33b5e95?auto=format&fit=crop&q=80&w=600",
-  "healthStatus": "Excellent",
-  "vaccinationStatus": "Fully Vaccinated",
-  "location": "Dhaka, Bangladesh",
-  "adoptionFee": 500,
-  "description": "Highly intelligent and protective. Milo knows basic commands and needs an active owner.",
-  "ownerEmail": "milo.owner@example.com",
-  "status": "available",
-  "createdAt": "2026-05-22T08:15:00.000Z",
-  "ownerId": "12345678988"
-}
+
 async function run() {
   try {
     await client.connect();
     const db = client.db("petbuddy");
     const petsCollection = db.collection("pets")
+    const requestsCollection = db.collection("requests")
 
     app.get('/pets', async (req, res) => {
       const cursor = petsCollection.find();
@@ -87,11 +72,81 @@ async function run() {
         }
 
         const result = await petsCollection.insertOne(petData);
-        res.status(201).send(result); // 201 is the ideal HTTP status for successful creation
-
+        res.status(201).send(result);
       } catch (error) {
-        console.error("Database Insert Error:", error); // Log the real error to your terminal for debugging
+        console.error("Database Insert Error:", error);
         res.status(500).send({ message: "Request failed", error: error.message });
+      }
+    });
+    app.post('/requests', async (req, res) => {
+      try {
+        const requestData = req.body;
+
+        if (!requestData || Object.keys(requestData).length === 0) {
+          return res.status(400).send({ message: "Bad Request: Please provide pet data." });
+        }
+
+        const result = await requestsCollection.insertOne(requestData);
+        res.status(201).send(result);
+      } catch (error) {
+        console.error("Database Insert Error:", error);
+        res.status(500).send({ message: "Request failed", error: error.message });
+      }
+    });
+    app.get('/requests', async (req, res) => {
+      try {
+        const { ownerId } = req.query;
+
+        if (!ownerId) {
+          return res.status(400).send({ message: "Owner ID query parameter is required" });
+        }
+
+        const cursor = requestsCollection.find({ ownerId: ownerId });
+        const result = await cursor.toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Server error", error: error.message });
+      }
+    });
+    app.delete('/requests/:id', async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const query = { _id: new ObjectId(id) };
+        const result = await requestsCollection.deleteOne(query);
+
+        if (result.deletedCount === 1) {
+          res.send({ success: true, message: "Adoption request deleted successfully" });
+        } else {
+          res.status(404).send({ success: false, message: "No request found with this ID" });
+        }
+      } catch (error) {
+        res.status(500).send({ success: false, message: "Server error", error: error.message });
+      }
+    });
+    app.patch('/requests/:id', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { status } = req.body; // e.g., { status: 'Approved' } or { status: 'Rejected' }
+
+        if (!status) {
+          return res.status(400).send({ success: false, message: "Status is required" });
+        }
+
+        const query = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: { status: status }
+        };
+
+        const result = await requestsCollection.updateOne(query, updateDoc);
+
+        if (result.modifiedCount === 1) {
+          res.send({ success: true, message: `Adoption request updated to ${status}` });
+        } else {
+          res.status(404).send({ success: false, message: "No changes made or request not found" });
+        }
+      } catch (error) {
+        res.status(500).send({ success: false, message: "Server error", error: error.message });
       }
     });
 
