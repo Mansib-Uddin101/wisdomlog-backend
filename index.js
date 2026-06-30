@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const { createRemoteJWKSet, jwtVerify } = require('jose-cjs');
 
@@ -47,7 +48,7 @@ app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req, 
     if (userId) {
       try {
         const database = getDb();
-        
+
         // Updates the single "user" collection matching your schema exactly
         const updateResult = await database.collection("user").updateOne(
           { _id: new ObjectId(userId) },
@@ -82,7 +83,7 @@ const JWKS = createRemoteJWKSet(
 const verifyToken = async (req, res, next) => {
   const authHeader = req?.headers.authorization;
   if (!authHeader) {
-    return res.status(404).json({ message: "Unauthorized" });
+    return res.status(401).json({ message: "Unauthorized" });
   }
   const token = authHeader.split(" ")[1];
   if (!token) {
@@ -90,10 +91,10 @@ const verifyToken = async (req, res, next) => {
   }
   try {
     const { payload } = await jwtVerify(token, JWKS);
-    req.user = payload; 
+    req.user = payload;
     next();
   } catch {
-    return res.status(403).json({ message: "Forbidden" });
+    return res.status(401).json({ message: "Forbidden" });
   }
 };
 
@@ -110,13 +111,67 @@ app.post('/lessons', async (req, res) => {
   try {
     const lessonData = req.body;
     const result = await getDb().collection("lessons").insertOne(lessonData);
-    res.status(201).send(result); 
+    res.status(201).send(result);
   } catch (error) {
     console.error("Error saving Lesson:", error);
     res.status(500).send({ message: `Error: ${error.message}` });
   }
 });
 
+app.delete('/lessons/:id',verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // 1. Validate the ObjectId format before using it
+    if (!id || !ObjectId.isValid(id)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid or missing Lesson ID format."
+      });
+    }
+
+    const query = { _id: new ObjectId(id) };
+    const result = await getDb().collection("lessons").deleteOne(query);
+
+    // 2. Check if a document was actually found and deleted
+    if (result.deletedCount === 0) {
+      return res.status(404).send({
+        success: false,
+        message: "Lesson not found."
+      });
+    }
+
+    // 3. Return a consistent success response
+    res.status(200).send({
+      success: true,
+      message: "Lesson deleted successfully.",
+      result
+    });
+
+  } catch (error) {
+    console.error("Delete Error:", error); // Log the actual stack trace in your server terminal
+    res.status(500).send({
+      success: false,
+      message: "Internal Server Error",
+      error: error.message
+    });
+  }
+});
+app.patch('/lessons/:id', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updatedData = req.body;
+
+    const result = await getDb().collection("lessons").updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updatedData }
+    );
+
+    res.status(200).send(result);
+  } catch (error) {
+    res.status(500).send({ message: "Failed to update lesson." });
+  }
+});
 app.get('/lessons/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -131,7 +186,7 @@ app.get('/lessons/:id', async (req, res) => {
   }
 });
 
-app.post('/comments', async (req, res) => {
+app.post('/comments', verifyToken, async (req, res) => {
   try {
     const commentData = req.body;
     await getDb().collection("comments").insertOne(commentData);
@@ -155,13 +210,39 @@ app.post('/favorites', async (req, res) => {
   try {
     const favoriteData = req.body;
     const result = await getDb().collection("favorites").insertOne(favoriteData);
-    res.status(201).send(result); 
+    res.status(201).send(result);
   } catch (error) {
     console.error("Error saving favorite:", error);
     res.status(500).send({ message: `Error: ${error.message}` });
   }
 });
+app.delete('/favorites/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
 
+    const result = await getDb().collection("favorites").deleteOne({
+      _id: new ObjectId(id)
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).send({ message: "Favorite not found." });
+    }
+
+    res.status(200).send({ message: "Successfully removed from favorites.", result });
+  } catch (error) {
+    console.error("Error deleting favorite:", error);
+    res.status(500).send({ message: `Error: ${error.message}` });
+  }
+});
+app.get('/favorites', async (req, res) => {
+  try {
+    const { userId } = req.query;
+    const result = await getDb().collection("favorites").find({ userId: userId }).toArray();
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: `Error: ${error}` });
+  }
+});
 app.get('/favorites/check', async (req, res) => {
   try {
     const { userId, lessonId } = req.query;
@@ -177,19 +258,111 @@ app.get('/favorites/check', async (req, res) => {
   }
 });
 
-app.post('/lesson-reports', async (req, res) => {
+app.post('/lesson-reports', verifyToken, async (req, res) => {
   try {
     const report = req.body;
     const result = await getDb().collection("lessons-reports").insertOne(report);
-    res.status(201).send(result); 
+    res.status(201).send(result);
   } catch (error) {
     console.error("Error saving report:", error);
     res.status(500).send({ message: `Error: ${error.message}` });
   }
 });
+app.get('/users/', verifyToken, async (req, res) => {
+   try {
+    const result = await getDb().collection("user").find().toArray();
+    res.status(201).send(result);
+  } catch (error) {
+    console.error("Error getting users", error);
+    res.status(500).send({ message: `Error: ${error.message}` });
+  } 
+})
+app.delete('/users/:id', verifyToken, async (req, res) => {
+   try {
+    const { id } = req.params;
+    const result = await getDb().collection("user").deleteOne({_id: new ObjectId(id)})
+    res.status(201).send(result);
+  } catch (error) {
+    console.error("Error getting users", error);
+    res.status(500).send({ message: `Error: ${error.message}` });
+  } 
+})
+app.patch('/users/:id', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { role } = req.body; // Destructure the role sent from the frontend
+
+    // Update the user's role in the database
+    const result = await getDb().collection("user").updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { role: role } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ message: "User not found" });
+    }
+
+    res.status(200).send(result);
+  } catch (error) {
+    console.error("Error updating user role", error);
+    res.status(500).send({ message: `Error: ${error.message}` });
+  }
+});
+
+app.get('/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the user in the MongoDB 'users' collection
+    const user1 = await getDb().collection("user").findOne({ _id: new ObjectId(id) });
+
+    if (!user) {
+      const user2 = await getDb().collection("users").findOne({ _id: new ObjectId(id) });
+
+    }
+    else {
+      return res.status(404).send({ message: "User not found" });
+    }
+
+    // Send back ONLY public-safe profile data
+    res.status(200).send({
+      _id: user._id,
+      name: user.name,
+      photoURL: user.photoURL || user.image, // Accommodate Better Auth's default image field
+      isPremium: user.isPremium || false
+    });
+  } catch (error) {
+    console.error("Error fetching user:", error);
+    res.status(500).send({ message: "Invalid ID format or server error" });
+  }
+});
 
 
 
+app.get('/lessons-reports', verifyToken, async (req, res) => {
+  try {
+    // Finds lessons where the 'reports' array exists and has at least 1 item
+    const reportedLessons = await getDb().collection("lessons-reports").find().toArray()
+
+    res.status(200).send(reportedLessons);
+  } catch (error) {
+    res.status(500).send({ message: "Failed to fetch reported lessons." });
+  }
+});
+
+// 2. Clear reports for a lesson (Ignore action)
+app.delete('/lessons-reports/:id', verifyToken, async (req, res) => {
+  try {
+    
+    const { id } = req.params;
+    const result = await getDb().collection("lesssons-reports").deleteOne({_id: new ObjectId(id)})
+    res.status(201).send(result);
+  } catch (error) {
+    
+    console.error("Error getting users", error);
+    res.status(500).send({ message: `Error: ${error.message}` });
+  }
+});
 
 
 app.post('/api/create-checkout-session', async (req, res) => {
@@ -210,7 +383,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
               name: 'WisdomLog Premium Access',
               description: 'Lifetime complete access to unlock all premium life lessons.',
             },
-            unit_amount: 150000, 
+            unit_amount: 150000,
           },
           quantity: 1,
         },
@@ -227,11 +400,6 @@ app.post('/api/create-checkout-session', async (req, res) => {
   }
 });
 
-// =========================================================================
-// 🚀 SERVER LIFECYCLE MANAGEMENT
-// =========================================================================
-
-// Connect the client immediately for production runtime stability
 client.connect().then(() => {
   console.log("✅ Successfully connected to MongoDB Atlas pool!");
 }).catch(err => {
