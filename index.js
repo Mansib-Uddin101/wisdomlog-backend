@@ -206,7 +206,7 @@ app.get('/comments', async (req, res) => {
   }
 });
 
-app.post('/favorites', async (req, res) => {
+app.post('/favorites', verifyToken, async (req, res) => {
   try {
     const favoriteData = req.body;
     const result = await getDb().collection("favorites").insertOne(favoriteData);
@@ -216,7 +216,7 @@ app.post('/favorites', async (req, res) => {
     res.status(500).send({ message: `Error: ${error.message}` });
   }
 });
-app.delete('/favorites/:id', async (req, res) => {
+app.delete('/favorites/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -234,7 +234,7 @@ app.delete('/favorites/:id', async (req, res) => {
     res.status(500).send({ message: `Error: ${error.message}` });
   }
 });
-app.get('/favorites', async (req, res) => {
+app.get('/favorites', verifyToken, async (req, res) => {
   try {
     const { userId } = req.query;
     const result = await getDb().collection("favorites").find({ userId: userId }).toArray();
@@ -243,7 +243,7 @@ app.get('/favorites', async (req, res) => {
     res.status(500).send({ message: `Error: ${error}` });
   }
 });
-app.get('/favorites/check', async (req, res) => {
+app.get('/favorites/check', verifyToken, async (req, res) => {
   try {
     const { userId, lessonId } = req.query;
     if (!userId || !lessonId) {
@@ -309,7 +309,7 @@ app.patch('/users/:id', verifyToken, async (req, res) => {
   }
 });
 
-app.get('/users/:id', async (req, res) => {
+app.get('/users/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
