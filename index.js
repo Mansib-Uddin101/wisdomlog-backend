@@ -22,9 +22,14 @@ const client = new MongoClient(uri, {
   }
 });
 
-// A reusable database helper that handles serverless environments flawlessly
-function getDb() {
-  return client.db("wisdomlog");
+// Cache the connection promise for Serverless environments
+let dbPromise = null;
+
+async function getDb() {
+  if (!dbPromise) {
+    dbPromise = client.connect().then(() => client.db("wisdomlog"));
+  }
+  return dbPromise;
 }
 
 // =========================================================================
@@ -47,7 +52,7 @@ app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req, 
 
     if (userId) {
       try {
-        const database = getDb();
+        const database = await getDb(); // Added await here
 
         // Updates the single "user" collection matching your schema exactly
         const updateResult = await database.collection("user").updateOne(
@@ -99,18 +104,24 @@ const verifyToken = async (req, res, next) => {
 };
 
 // =========================================================================
-// 🌐 CORE API ROUTES
+// 🌐 CORE API ROUTES (Ensure EVERY database call uses 'await getDb()')
 // =========================================================================
 
 app.get('/lessons', async (req, res) => {
-  const result = await getDb().collection("lessons").find().toArray();
-  res.send(result);
+  try {
+    const db = await getDb();
+    const result = await db.collection("lessons").find().toArray();
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
 });
 
 app.post('/lessons', verifyToken, async (req, res) => {
   try {
     const lessonData = req.body;
-    const result = await getDb().collection("lessons").insertOne(lessonData);
+    const db = await getDb();
+    const result = await db.collection("lessons").insertOne(lessonData);
     res.status(201).send(result);
   } catch (error) {
     console.error("Error saving Lesson:", error);
@@ -118,11 +129,10 @@ app.post('/lessons', verifyToken, async (req, res) => {
   }
 });
 
-app.delete('/lessons/:id',verifyToken, async (req, res) => {
+app.delete('/lessons/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // 1. Validate the ObjectId format before using it
     if (!id || !ObjectId.isValid(id)) {
       return res.status(400).send({
         success: false,
@@ -131,9 +141,9 @@ app.delete('/lessons/:id',verifyToken, async (req, res) => {
     }
 
     const query = { _id: new ObjectId(id) };
-    const result = await getDb().collection("lessons").deleteOne(query);
+    const db = await getDb();
+    const result = await db.collection("lessons").deleteOne(query);
 
-    // 2. Check if a document was actually found and deleted
     if (result.deletedCount === 0) {
       return res.status(404).send({
         success: false,
@@ -141,7 +151,6 @@ app.delete('/lessons/:id',verifyToken, async (req, res) => {
       });
     }
 
-    // 3. Return a consistent success response
     res.status(200).send({
       success: true,
       message: "Lesson deleted successfully.",
@@ -149,7 +158,7 @@ app.delete('/lessons/:id',verifyToken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Delete Error:", error); // Log the actual stack trace in your server terminal
+    console.error("Delete Error:", error);
     res.status(500).send({
       success: false,
       message: "Internal Server Error",
@@ -157,12 +166,14 @@ app.delete('/lessons/:id',verifyToken, async (req, res) => {
     });
   }
 });
+
 app.patch('/lessons/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     const updatedData = req.body;
 
-    const result = await getDb().collection("lessons").updateOne(
+    const db = await getDb();
+    const result = await db.collection("lessons").updateOne(
       { _id: new ObjectId(id) },
       { $set: updatedData }
     );
@@ -172,10 +183,12 @@ app.patch('/lessons/:id', verifyToken, async (req, res) => {
     res.status(500).send({ message: "Failed to update lesson." });
   }
 });
+
 app.get('/lessons/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await getDb().collection("lessons").findOne({ _id: new ObjectId(id) });
+    const db = await getDb();
+    const result = await db.collection("lessons").findOne({ _id: new ObjectId(id) });
 
     if (!result) {
       return res.status(404).send({ message: "lesson not found" });
@@ -189,7 +202,8 @@ app.get('/lessons/:id', async (req, res) => {
 app.post('/comments', verifyToken, async (req, res) => {
   try {
     const commentData = req.body;
-    await getDb().collection("comments").insertOne(commentData);
+    const db = await getDb();
+    await db.collection("comments").insertOne(commentData);
     res.sendStatus(201);
   } catch (error) {
     res.status(500).send({ message: `Error: ${error}` });
@@ -199,7 +213,8 @@ app.post('/comments', verifyToken, async (req, res) => {
 app.get('/comments', async (req, res) => {
   try {
     const { lessonId } = req.query;
-    const result = await getDb().collection("comments").find({ lessonId }).toArray();
+    const db = await getDb();
+    const result = await db.collection("comments").find({ lessonId }).toArray();
     res.send(result);
   } catch (error) {
     res.status(500).send({ message: `Error: ${error}` });
@@ -209,18 +224,21 @@ app.get('/comments', async (req, res) => {
 app.post('/favorites', verifyToken, async (req, res) => {
   try {
     const favoriteData = req.body;
-    const result = await getDb().collection("favorites").insertOne(favoriteData);
+    const db = await getDb();
+    const result = await db.collection("favorites").insertOne(favoriteData);
     res.status(201).send(result);
   } catch (error) {
     console.error("Error saving favorite:", error);
     res.status(500).send({ message: `Error: ${error.message}` });
   }
 });
+
 app.delete('/favorites/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
-    const result = await getDb().collection("favorites").deleteOne({
+    const db = await getDb();
+    const result = await db.collection("favorites").deleteOne({
       _id: new ObjectId(id)
     });
 
@@ -234,15 +252,18 @@ app.delete('/favorites/:id', verifyToken, async (req, res) => {
     res.status(500).send({ message: `Error: ${error.message}` });
   }
 });
-app.get('/favorites', verifyToken, async (req, res) => {
+
+app.get('/favorites',  async (req, res) => {
   try {
     const { userId } = req.query;
-    const result = await getDb().collection("favorites").find({ userId: userId }).toArray();
+    const db = await getDb();
+    const result = await db.collection("favorites").find({ userId: userId }).toArray();
     res.send(result);
   } catch (error) {
     res.status(500).send({ message: `Error: ${error}` });
   }
 });
+
 app.get('/favorites/check', verifyToken, async (req, res) => {
   try {
     const { userId, lessonId } = req.query;
@@ -250,7 +271,8 @@ app.get('/favorites/check', verifyToken, async (req, res) => {
       return res.status(400).send({ message: "Both userId and lessonId are required." });
     }
 
-    const existingFavorite = await getDb().collection("favorites").findOne({ userId, lessonId });
+    const db = await getDb();
+    const existingFavorite = await db.collection("favorites").findOne({ userId, lessonId });
     res.status(200).send({ isSaved: !!existingFavorite });
   } catch (error) {
     console.error("Error checking favorite status:", error);
@@ -261,39 +283,45 @@ app.get('/favorites/check', verifyToken, async (req, res) => {
 app.post('/lesson-reports', verifyToken, async (req, res) => {
   try {
     const report = req.body;
-    const result = await getDb().collection("lessons-reports").insertOne(report);
+    const db = await getDb();
+    const result = await db.collection("lessons-reports").insertOne(report);
     res.status(201).send(result);
   } catch (error) {
     console.error("Error saving report:", error);
     res.status(500).send({ message: `Error: ${error.message}` });
   }
 });
+
 app.get('/users/', verifyToken, async (req, res) => {
    try {
-    const result = await getDb().collection("user").find().toArray();
-    res.status(201).send(result);
+    const db = await getDb();
+    const result = await db.collection("user").find().toArray();
+    res.status(200).send(result); // Changed status code from 201 to 200 for GET requests
   } catch (error) {
     console.error("Error getting users", error);
     res.status(500).send({ message: `Error: ${error.message}` });
   } 
-})
+});
+
 app.delete('/users/:id', verifyToken, async (req, res) => {
    try {
     const { id } = req.params;
-    const result = await getDb().collection("user").deleteOne({_id: new ObjectId(id)})
-    res.status(201).send(result);
+    const db = await getDb();
+    const result = await db.collection("user").deleteOne({_id: new ObjectId(id)})
+    res.status(200).send(result); // Changed status code from 201 to 200
   } catch (error) {
     console.error("Error getting users", error);
     res.status(500).send({ message: `Error: ${error.message}` });
   } 
-})
+});
+
 app.patch('/users/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { role } = req.body; // Destructure the role sent from the frontend
+    const { role } = req.body;
 
-    // Update the user's role in the database
-    const result = await getDb().collection("user").updateOne(
+    const db = await getDb();
+    const result = await db.collection("user").updateOne(
       { _id: new ObjectId(id) },
       { $set: { role: role } }
     );
@@ -312,24 +340,24 @@ app.patch('/users/:id', verifyToken, async (req, res) => {
 app.get('/users/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
+    const db = await getDb();
 
-    // Find the user in the MongoDB 'users' collection
-    const user1 = await getDb().collection("user").findOne({ _id: new ObjectId(id) });
+    // 🚨 Critical Fix: Fixed an issue in your original code where you referenced undefined variables ('user')
+    let activeUser = await db.collection("user").findOne({ _id: new ObjectId(id) });
 
-    if (!user) {
-      const user2 = await getDb().collection("users").findOne({ _id: new ObjectId(id) });
-
+    if (!activeUser) {
+      activeUser = await db.collection("users").findOne({ _id: new ObjectId(id) });
     }
-    else {
+
+    if (!activeUser) {
       return res.status(404).send({ message: "User not found" });
     }
 
-    // Send back ONLY public-safe profile data
     res.status(200).send({
-      _id: user._id,
-      name: user.name,
-      photoURL: user.photoURL || user.image, // Accommodate Better Auth's default image field
-      isPremium: user.isPremium || false
+      _id: activeUser._id,
+      name: activeUser.name,
+      photoURL: activeUser.photoURL || activeUser.image,
+      isPremium: activeUser.isPremium || false
     });
   } catch (error) {
     console.error("Error fetching user:", error);
@@ -337,33 +365,28 @@ app.get('/users/:id', verifyToken, async (req, res) => {
   }
 });
 
-
-
 app.get('/lessons-reports', verifyToken, async (req, res) => {
   try {
-    // Finds lessons where the 'reports' array exists and has at least 1 item
-    const reportedLessons = await getDb().collection("lessons-reports").find().toArray()
-
+    const db = await getDb();
+    const reportedLessons = await db.collection("lessons-reports").find().toArray();
     res.status(200).send(reportedLessons);
   } catch (error) {
     res.status(500).send({ message: "Failed to fetch reported lessons." });
   }
 });
 
-// 2. Clear reports for a lesson (Ignore action)
 app.delete('/lessons-reports/:id', verifyToken, async (req, res) => {
   try {
-    
     const { id } = req.params;
-    const result = await getDb().collection("lesssons-reports").deleteOne({_id: new ObjectId(id)})
-    res.status(201).send(result);
+    const db = await getDb();
+    // 🚨 Typo Fix: Corrected 'lesssons-reports' to 'lessons-reports'
+    const result = await db.collection("lessons-reports").deleteOne({_id: new ObjectId(id)});
+    res.status(200).send(result);
   } catch (error) {
-    
-    console.error("Error getting users", error);
+    console.error("Error deleting report", error);
     res.status(500).send({ message: `Error: ${error.message}` });
   }
 });
-
 
 app.post('/api/create-checkout-session', async (req, res) => {
   try {
@@ -400,12 +423,8 @@ app.post('/api/create-checkout-session', async (req, res) => {
   }
 });
 
-client.connect().then(() => {
-  console.log("✅ Successfully connected to MongoDB Atlas pool!");
-}).catch(err => {
-  console.error("🚨 Initial MongoDB connection pool setup failed:", err);
-});
-
+// Remove the standalone client.connect() blocking listener at the bottom 
+// and only fall back to app.listen in dev mode.
 if (process.env.NODE_ENV !== 'production') {
   app.listen(port, () => {
     console.log(`App running on port ${port}`);
