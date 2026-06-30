@@ -107,7 +107,7 @@ app.get('/lessons', async (req, res) => {
   res.send(result);
 });
 
-app.post('/lessons', async (req, res) => {
+app.post('/lessons', verifyToken, async (req, res) => {
   try {
     const lessonData = req.body;
     const result = await getDb().collection("lessons").insertOne(lessonData);
